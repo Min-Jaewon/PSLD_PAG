@@ -11,8 +11,9 @@
 - `bash run/sr8_#.sh` for super-resolution task. 
 
 2 gpus are required for each task \
-500 images per 1 gpu
+500 images per 1 gpu \
 
+**Each Sampling requires at least 20GB memory**
 ## Struture of result
 ``````
 result/{task} # bip, gb, mb, sr8
