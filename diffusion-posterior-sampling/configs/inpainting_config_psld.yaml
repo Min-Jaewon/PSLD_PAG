@@ -13,7 +13,7 @@ measurement:
   mask_opt:
     mask_type: random
     # mask_len_range: !!python/tuple [128, 129]  # for box
-    mask_prob_range: !!python/tuple [0.3, 0.7]  # for random
+    mask_prob_range: !!python/tuple [0.2, 0.8]  # for random
     image_size: 512
 
 

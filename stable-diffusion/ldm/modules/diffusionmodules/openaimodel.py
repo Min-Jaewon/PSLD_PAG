@@ -77,12 +77,12 @@ class TimestepEmbedSequential(nn.Sequential, TimestepBlock):
     support it as an extra input.
     """
 
-    def forward(self, x, emb, context=None):
+    def forward(self, x, emb, context=None, drop_rate=0.0, drop_type={'self': False, 'cross': False}):
         for layer in self:
             if isinstance(layer, TimestepBlock):
                 x = layer(x, emb)
             elif isinstance(layer, SpatialTransformer):
-                x = layer(x, context)
+                x = layer(x, context, drop_rate, drop_type)
             else:
                 x = layer(x)
         return x
@@ -375,7 +375,6 @@ class QKVAttentionLegacy(nn.Module):
     def count_flops(model, _x, y):
         return count_flops_attn(model, _x, y)
 
-
 class QKVAttention(nn.Module):
     """
     A module which performs QKV attention and splits in a different order.
@@ -466,6 +465,9 @@ class UNetModel(nn.Module):
         context_dim=None,                 # custom transformer support
         n_embed=None,                     # custom support for prediction of discrete ids into codebook of first stage vq model
         legacy=True,
+        input_drop=[5,7,8],
+        middle_drop=True,
+        output_drop=[]
     ):
         super().__init__()
         if use_spatial_transformer:
@@ -502,7 +504,9 @@ class UNetModel(nn.Module):
         self.num_head_channels = num_head_channels
         self.num_heads_upsample = num_heads_upsample
         self.predict_codebook_ids = n_embed is not None
-
+        self.input_drop=input_drop
+        self.middle_drop=middle_drop
+        self.output_drop=output_drop
         time_embed_dim = model_channels * 4
         self.time_embed = nn.Sequential(
             linear(model_channels, time_embed_dim),
@@ -707,7 +711,7 @@ class UNetModel(nn.Module):
         self.middle_block.apply(convert_module_to_f32)
         self.output_blocks.apply(convert_module_to_f32)
 
-    def forward(self, x, timesteps=None, context=None, y=None,**kwargs):
+    def forward(self, x, timesteps=None, context=None, drop_rate=0.0, drop_type={'self': False, 'cross': False}, y=None,**kwargs):
         """
         Apply the model to an input batch.
         :param x: an [N x C x ...] Tensor of inputs.
@@ -728,14 +732,27 @@ class UNetModel(nn.Module):
             emb = emb + self.label_emb(y)
 
         h = x.type(self.dtype)
-        for module in self.input_blocks:
-            h = module(h, emb, context)
+        for num_layer, module in enumerate(self.input_blocks):
+            if num_layer in self.input_drop:
+                h = module(h, emb, context, drop_rate, drop_type)
+            else:
+                h = module(h, emb, context, 0.0)
             hs.append(h)
-        h = self.middle_block(h, emb, context)
-        for module in self.output_blocks:
+
+        if self.middle_drop:
+            h = self.middle_block(h, emb, context, drop_rate, drop_type)
+        else:
+            h = self.middle_block(h, emb, context, 0.0)
+            
+        for num_layer, module in enumerate(self.output_blocks):
             h = th.cat([h, hs.pop()], dim=1)
-            h = module(h, emb, context)
+            if num_layer in self.output_drop:
+                h = module(h, emb, context, drop_rate, drop_type)
+            else:
+                h = module(h, emb, context, 0.0)
+
         h = h.type(x.dtype)
+        
         if self.predict_codebook_ids:
             return self.id_predictor(h)
         else:

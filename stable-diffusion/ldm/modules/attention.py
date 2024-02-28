@@ -154,10 +154,10 @@ class CrossAttention(nn.Module):
         super().__init__()
         inner_dim = dim_head * heads
         context_dim = default(context_dim, query_dim)
-
+       
         self.scale = dim_head ** -0.5
         self.heads = heads
-
+        
         self.to_q = nn.Linear(query_dim, inner_dim, bias=False)
         self.to_k = nn.Linear(context_dim, inner_dim, bias=False)
         self.to_v = nn.Linear(context_dim, inner_dim, bias=False)
@@ -167,14 +167,15 @@ class CrossAttention(nn.Module):
             nn.Dropout(dropout)
         )
 
-    def forward(self, x, context=None, mask=None):
+    def forward(self, x, context=None, mask=None, drop_rate=0.0):
         h = self.heads
 
         q = self.to_q(x)
         context = default(context, x)
         k = self.to_k(context)
         v = self.to_v(context)
-
+        if drop_rate==1.0:
+            return self.to_out(v)
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q, k, v))
 
         sim = einsum('b i d, b j d -> b i j', q, k) * self.scale
@@ -187,12 +188,14 @@ class CrossAttention(nn.Module):
 
         # attention, what we cannot get enough of
         attn = sim.softmax(dim=-1)
-
+        if drop_rate!=0.0:
+            attn = sim.softmax(dim=-1)
+            drop_mask = torch.rand(attn.shape, device=attn.device) > drop_rate
+            attn=attn*drop_mask
         out = einsum('b i j, b j d -> b i d', attn, v)
         out = rearrange(out, '(b h) n d -> b n (h d)', h=h)
         return self.to_out(out)
-
-
+    
 class BasicTransformerBlock(nn.Module):
     def __init__(self, dim, n_heads, d_head, dropout=0., context_dim=None, gated_ff=True, checkpoint=True):
         super().__init__()
@@ -205,12 +208,23 @@ class BasicTransformerBlock(nn.Module):
         self.norm3 = nn.LayerNorm(dim)
         self.checkpoint = checkpoint
 
-    def forward(self, x, context=None):
-        return checkpoint(self._forward, (x, context), self.parameters(), self.checkpoint)
+    def forward(self, x, context=None, drop_rate=0.0, drop_type={'self': False, 'cross': False}):
+        if not drop_type['self'] and not drop_type['cross']:
+            return checkpoint(self._forward, (x, context, torch.tensor(drop_rate)), self.parameters(), self.checkpoint)
+        else: 
+            return checkpoint(self._forward, (x, context, torch.tensor(drop_rate), drop_type), self.parameters(), False)
 
-    def _forward(self, x, context=None):
-        x = self.attn1(self.norm1(x)) + x
-        x = self.attn2(self.norm2(x), context=context) + x
+    def _forward(self, x, context=None, drop_rate=torch.tensor(0.0), drop_type={'self': False, 'cross': False}):
+        if drop_type['self']:
+            x = self.attn1(self.norm1(x), drop_rate=drop_rate.item()) + x
+        else:
+            x = self.attn1(self.norm1(x)) + x
+        
+        if drop_type['cross']:
+            x = self.attn2(self.norm2(x), context=context, drop_rate=drop_rate.item()) + x
+        else:
+            x = self.attn2(self.norm2(x), context=context) + x
+
         x = self.ff(self.norm3(x)) + x
         return x
 
@@ -247,7 +261,7 @@ class SpatialTransformer(nn.Module):
                                               stride=1,
                                               padding=0))
 
-    def forward(self, x, context=None):
+    def forward(self, x, context=None, drop_rate=0.0, drop_type={'self': False, 'cross': False}):
         # note: if no context is given, cross-attention defaults to self-attention
         b, c, h, w = x.shape
         x_in = x
@@ -255,7 +269,7 @@ class SpatialTransformer(nn.Module):
         x = self.proj_in(x)
         x = rearrange(x, 'b c h w -> b (h w) c')
         for block in self.transformer_blocks:
-            x = block(x, context=context)
+            x = block(x, context=context, drop_rate=drop_rate, drop_type=drop_type)
         x = rearrange(x, 'b (h w) c -> b c h w', h=h, w=w)
         x = self.proj_out(x)
         return x + x_in

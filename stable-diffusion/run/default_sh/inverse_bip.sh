@@ -6,4 +6,5 @@ python scripts/inverse.py \
     --general_inverse=0 \
     --gamma=1e-2 \
     --omega=1e-1 \
-    --outdir='outputs/psld-samples-bip' 
+    --ddim_steps=50 \
+    --outdir='outputs/psld-samples-bip'
