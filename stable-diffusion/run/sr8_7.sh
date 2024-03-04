@@ -19,6 +19,7 @@ python scripts/inverse_batch.py \
     --omega=$omega \
     --gamma=$gamma \
     --outdir="${output_path}" \
-    --min_count=500 \
+    --min_count=350 \
+    --max_count=400 \
     --skip_low_res;
     

@@ -22,7 +22,7 @@ python scripts/inverse_batch.py \
     --omega=$omega \
     --gamma=$gamma \
     --outdir="${output_path}" \
-    --max_count=500 \
+    --max_count=50 \
     --skip_low_res;
 
 

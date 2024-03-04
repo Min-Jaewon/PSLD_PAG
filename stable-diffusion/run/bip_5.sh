@@ -1,4 +1,4 @@
-export CUDA_VISIBLE_DEVICES='1'
+export CUDA_VISIBLE_DEVICES='5'
 
 
 scale=5.0
@@ -22,6 +22,9 @@ python scripts/inverse_batch.py \
     --omega=$omega \
     --gamma=$gamma \
     --outdir="${output_path}" \
-    --min_count=50 \
-    --max_count=100 \
+    --min_count=250 \
+    --max_count=300 \
     --skip_low_res;
+
+
+

@@ -1,7 +1,10 @@
 ## Environment Setting
 ```sh install_env.sh``` : If it doesn't work, install envrionments manually in the file
 
+## FFHQ 256x256 1k validation set
+Link : <https://www.kaggle.com/datasets/denislukovnikov/ffhq256-images-only>
 
+```00000.png ~ 00999.png``` are used
 
 ## File to run
 \# indicate which number of cuda to use
@@ -10,8 +13,7 @@
 - `bash run/mb_#.sh` for motion deblur task.
 - `bash run/sr8_#.sh` for super-resolution task. 
 
-2 gpus are required for each task \
-500 images per 1 gpu \
+500 images per 1 gpu
 
 **Each Sampling requires at least 20GB memory**
 ## Struture of result
