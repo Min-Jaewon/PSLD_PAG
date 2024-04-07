@@ -24,7 +24,7 @@ cd stable-diffusion
 
 ## Struture of result
 ```
-outputs/{task} # bip, gb, mb, sr8
+stable-diffusion/outputs/{task} # bip, gb, mb, sr8
 ├── samples
 │    └─{file_id}.png    # sample images
 └── y_n
