@@ -15,7 +15,7 @@ cd ../diffusion-posterior-sampling
 pip install -r requirements.txt
 ```
 
-External codes for DPS setting.
+External codes for DPS environment
 ```
 cd diffusion-posterior-sampling
 git clone https://github.com/VinAIResearch/blur-kernel-space-exploring bkse
