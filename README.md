@@ -1,6 +1,13 @@
 ## Environment Setting
 ```sh install_env.sh``` : If it doesn't work, install envrionments manually in the file
 
+External codes for DPS setting.
+```
+cd diffusion-posterior-sampling
+git clone https://github.com/VinAIResearch/blur-kernel-space-exploring bkse
+git clone https://github.com/LeviBorodenko/motionblur motionblur
+```
+
 ## Download Pretrained Model
 Link : <https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.ckpt>
 
