@@ -36,7 +36,7 @@ cd stable-diffusion
 - bash run/imagenet_{task}_pag.sh # for imagenet dataset
 ```
 
-## Struture of result
+## Struture of results
 ```
 stable-diffusion/outputs/{task} # bip, gb, mb, sr8
 ├── samples
