@@ -76,10 +76,7 @@ class DDIMSampler(object):
                x_T=None,
                log_every_t=100,
                unconditional_guidance_scale=1.,
-               adg_scale=0.0,
-               drop_rate=0.0,
-               drop_type={'self': False, 'cross': False},
-               scale_schedule=0,
+               pag_scale=0.0,
                unconditional_conditioning=None,
                ip_mask = None, measurements = None, operator = None, gamma = 1, inpainting = False, omega=1,
                general_inverse = None, noiser=None,
@@ -117,10 +114,7 @@ class DDIMSampler(object):
                                                     x_T=x_T,
                                                     log_every_t=log_every_t,
                                                     unconditional_guidance_scale=unconditional_guidance_scale,
-                                                    adg_scale=adg_scale,
-                                                    drop_rate=drop_rate,
-                                                    drop_type=drop_type,
-                                                    scale_schedule=scale_schedule,
+                                                    pag_scale=pag_scale,
                                                     unconditional_conditioning=unconditional_conditioning,
                                                     ip_mask = ip_mask, measurements = measurements, operator = operator,
                                                     gamma = gamma,
@@ -137,8 +131,7 @@ class DDIMSampler(object):
                       callback=None, timesteps=None, quantize_denoised=False,
                       mask=None, x0=None, img_callback=None, log_every_t=100,
                       temperature=1., noise_dropout=0., score_corrector=None, corrector_kwargs=None,
-                      unconditional_guidance_scale=1., unconditional_conditioning=None, adg_scale=0.0, drop_rate=0.0, 
-                      drop_type={'self': False, 'cross': False}, scale_schedule=0,
+                      unconditional_guidance_scale=1., unconditional_conditioning=None, pag_scale=0.0,
                       ip_mask = None, measurements = None, operator = None, gamma = 1, inpainting=False, omega=1,
                       general_inverse = None, noiser=None,
                       ffhq256=False):
@@ -155,7 +148,7 @@ class DDIMSampler(object):
             subset_end = int(min(timesteps / self.ddim_timesteps.shape[0], 1) * self.ddim_timesteps.shape[0]) - 1
             timesteps = self.ddim_timesteps[:subset_end]
 
-        intermediates = {'x_inter': [img], 'pred_x0_cond': [img], 'pred_x0_perturb': [img], 'pred_x0_e_diff': [img-img]}
+        intermediates = {'x_inter': [img], 'pred_x0': [img]}
         time_range = reversed(range(0,timesteps)) if ddim_use_original_steps else np.flip(timesteps)
         total_steps = timesteps if ddim_use_original_steps else timesteps.shape[0]
         print(f"Running DDIM Sampling with {total_steps} timesteps")
@@ -164,11 +157,7 @@ class DDIMSampler(object):
 
         for i, step in enumerate(iterator):
             index = total_steps - i - 1
-            #print('index:', index)
             ts = torch.full((b,), step, device=device, dtype=torch.long)
-
-            # if index < scale_schedule:
-            #     adg_scale=0
 
             if mask is not None:
                 assert x0 is not None
@@ -180,7 +169,7 @@ class DDIMSampler(object):
                                       noise_dropout=noise_dropout, score_corrector=score_corrector,
                                       corrector_kwargs=corrector_kwargs,
                                       unconditional_guidance_scale=unconditional_guidance_scale,
-                                      adg_scale=adg_scale, drop_rate=drop_rate, drop_type=drop_type,
+                                      pag_scale=pag_scale,
                                       unconditional_conditioning=unconditional_conditioning,
                                       ip_mask = ip_mask, measurements = measurements, operator = operator, gamma = gamma,
                                       inpainting=inpainting, omega=omega,
@@ -188,21 +177,20 @@ class DDIMSampler(object):
                                       general_inverse=general_inverse, noiser=noiser,
                                       ffhq256=ffhq256)
             
-            img, pred_x0_cond = outs
+            img, pred_x0 = outs
             if callback: callback(i)
-            if img_callback: img_callback(pred_x0_cond, i)
+            if img_callback: img_callback(pred_x0, i)
 
             if index % log_every_t == 0 or index == total_steps - 1:
                 intermediates['x_inter'].append(img)
-                intermediates['pred_x0_cond'].append(pred_x0_cond)
-
+                intermediates['pred_x0'].append(pred_x0)
 
         return img, intermediates
 
     ######################
     def p_sample_ddim(self, x, c, t, index, repeat_noise=False, use_original_steps=False, quantize_denoised=False,
                       temperature=1., noise_dropout=0., score_corrector=None, corrector_kwargs=None,
-                      unconditional_guidance_scale=1., unconditional_conditioning=None, adg_scale=0.0, drop_rate=0.0, drop_type={'self': False, 'cross': False},
+                      unconditional_guidance_scale=1., unconditional_conditioning=None, pag_scale=0.0,
                       ip_mask=None, measurements = None, operator = None, gamma=1, inpainting=False,
                       gamma_scale = None, omega = 1e-1,
                       general_inverse=False,noiser=None,
@@ -218,32 +206,33 @@ class DDIMSampler(object):
             z_t = torch.clone(x.detach())
             z_t.requires_grad = True
             if unconditional_conditioning is None or unconditional_guidance_scale == 1.:
-                if adg_scale==0.0: # cfg x & attention drop x
+                # CFG(X) & PAG(X)
+                if pag_scale==0.0:
                     e_t_cond = self.model.apply_model(z_t, t, c)
                     e_t = e_t_cond
-                else:   #cfg  x & ours O
-                    #print("Appling Our Guidance")
-                    e_t_cond=self.model.apply_model(z_t, t, c) # sampling with attention
-                    e_t_dropped=self.model.apply_model(z_t, t, c, drop_rate=drop_rate, drop_type=drop_type) # sampling with attention drop
-                    e_t= e_t_dropped + adg_scale * (e_t_cond-e_t_dropped)
+                # CFG(X) & PAG(O)   
+                else:   
+                    e_t_cond=self.model.apply_model(z_t, t, c) 
+                    e_t_perturbed=self.model.apply_model(z_t, t, c, use_pag=True) 
+                    e_t= e_t_cond + pag_scale * (e_t_cond-e_t_perturbed)
 
             else:
-                if adg_scale==0.0: # cfg o & attention drp x
+                # CFG(O) & PAG(X)
+                if pag_scale==0.0: 
                     x_in = torch.cat([z_t] * 2)
                     t_in = torch.cat([t] * 2)
                     c_in = torch.cat([unconditional_conditioning, c])
                     e_t_uncond, e_t_cond = self.model.apply_model(x_in, t_in, c_in).chunk(2)
                     e_t = e_t_uncond + unconditional_guidance_scale * (e_t_cond - e_t_uncond)
-                           
-                    
-                else: # cfg o & attention drop o
+                # CFG(O) & PAG(O)
+                else: 
                     x_in = torch.cat([z_t] * 2)
                     t_in = torch.cat([t] * 2)
                     c_in = torch.cat([unconditional_conditioning, c])
                     e_t_uncond, e_t_cond = self.model.apply_model(x_in, t_in, c_in).chunk(2)
                     e_t = e_t_uncond + unconditional_guidance_scale * (e_t_cond - e_t_uncond)
-                    e_t_dropped=self.model.apply_model_dropped(z_t, t, c, adg_scale) # sampling with attention drop
-                    e_t = e_t + adg_scale * (e_t_cond-e_t_dropped)
+                    e_t_perturbed=self.model.apply_model(z_t, t, c, use_pag=True)
+                    e_t = e_t + pag_scale * (e_t_cond-e_t_perturbed)
             
             
             if score_corrector is not None:
@@ -279,10 +268,12 @@ class DDIMSampler(object):
             
             
             ##############################################
-            if adg_scale!=0.0 or unconditional_guidance_scale!=1.0:
-                pred_z_0 = (z_t - sqrt_one_minus_at * e_t_cond) / a_t.sqrt()
-
-            image_pred = self.model.differentiable_decode_first_stage(pred_z_0)
+            if pag_scale!=0.0 or unconditional_guidance_scale!=1.0: # predict z_0 with not guided epsilon
+                pred_z_0_opt = (z_t - sqrt_one_minus_at * e_t_cond) / a_t.sqrt()
+            else:
+                pred_z_0_opt = pred_z_0
+                
+            image_pred = self.model.differentiable_decode_first_stage(pred_z_0_opt)
             meas_pred = operator.forward(image_pred,mask=ip_mask)
             meas_pred = noiser(meas_pred)
             meas_error = torch.linalg.norm(meas_pred - measurements)
@@ -295,7 +286,7 @@ class DDIMSampler(object):
             # encoded_z_0 = self.model.encode_first_stage(inpainted_image) if ffhq256 else self.model.encode_first_stage(inpainted_image) 
             encoded_z_0 = self.model.encode_first_stage(inpainted_image.type(torch.float32))
             encoded_z_0 = self.model.get_first_stage_encoding(encoded_z_0)
-            inpaint_error = torch.linalg.norm(encoded_z_0 - pred_z_0)
+            inpaint_error = torch.linalg.norm(encoded_z_0 - pred_z_0_opt)
             
             error = inpaint_error * gamma + meas_error * omega
             gradients = torch.autograd.grad(error, inputs=z_t)[0]
@@ -304,39 +295,39 @@ class DDIMSampler(object):
 
             return z_prev.detach(), pred_z_0.detach()
         
-        elif general_inverse:
+        elif general_inverse:   
             #print('Running general inverse module...')
             z_t = torch.clone(x.detach())
             z_t.requires_grad = True
             
             if unconditional_conditioning is None or unconditional_guidance_scale == 1.:
-                if adg_scale==0.0: # cfg x & attention drop x
+                # CFG(X) & PAG(X)
+                if pag_scale==0.0:
                     e_t_cond = self.model.apply_model(z_t, t, c)
                     e_t = e_t_cond
-                else:   #cfg  x & ours O
-                    #print("Appling Our Guidance")
-                    e_t_cond=self.model.apply_model(z_t, t, c) # sampling with attention
-                    e_t_dropped=self.model.apply_model(z_t, t, c, drop_rate=drop_rate, drop_type=drop_type) # sampling with attention drop
-                    e_t= e_t_dropped + adg_scale * (e_t_cond-e_t_dropped)
+                # CFG(X) & PAG(O)   
+                else:   
+                    e_t_cond=self.model.apply_model(z_t, t, c) 
+                    e_t_perturbed=self.model.apply_model(z_t, t, c, use_pag=True) 
+                    e_t= e_t_cond + pag_scale * (e_t_cond-e_t_perturbed)
 
             else:
-                if adg_scale==0.0: # cfg o & attention drp x
+                # CFG(O) & PAG(X)
+                if pag_scale==0.0: 
                     x_in = torch.cat([z_t] * 2)
                     t_in = torch.cat([t] * 2)
                     c_in = torch.cat([unconditional_conditioning, c])
                     e_t_uncond, e_t_cond = self.model.apply_model(x_in, t_in, c_in).chunk(2)
                     e_t = e_t_uncond + unconditional_guidance_scale * (e_t_cond - e_t_uncond)
-                           
-                    
-                else: # cfg o & attention drop o
+                # CFG(O) & PAG(O)
+                else: 
                     x_in = torch.cat([z_t] * 2)
                     t_in = torch.cat([t] * 2)
                     c_in = torch.cat([unconditional_conditioning, c])
                     e_t_uncond, e_t_cond = self.model.apply_model(x_in, t_in, c_in).chunk(2)
                     e_t = e_t_uncond + unconditional_guidance_scale * (e_t_cond - e_t_uncond)
-                    e_t_dropped=self.model.apply_model_dropped(z_t, t, c, adg_scale) # sampling with attention drop
-                    e_t = e_t + adg_scale * (e_t_cond-e_t_dropped)
-                    
+                    e_t_perturbed=self.model.apply_model(z_t, t, c, use_pag=True)
+                    e_t = e_t + pag_scale * (e_t_cond-e_t_perturbed)
 
             
             
@@ -373,10 +364,10 @@ class DDIMSampler(object):
             
             
             ##############################################
-            if adg_scale!=0.0 or unconditional_guidance_scale!=1.0:
-                pred_z_0 = (z_t - sqrt_one_minus_at * e_t_cond) / a_t.sqrt()
+            if pag_scale!=0.0 or unconditional_guidance_scale!=1.0:  # predict z_0 with not guided epsilon
+                pred_z_0_opt = (z_t - sqrt_one_minus_at * e_t_cond) / a_t.sqrt()
 
-            image_pred = self.model.differentiable_decode_first_stage(pred_z_0)
+            image_pred = self.model.differentiable_decode_first_stage(pred_z_0_opt)
             meas_pred = operator.forward(image_pred)
             meas_pred = noiser(meas_pred)
             meas_error = torch.linalg.norm(meas_pred - measurements)
@@ -388,7 +379,7 @@ class DDIMSampler(object):
             # encoded_z_0 = self.model.encode_first_stage(inpainted_image) if ffhq256 else self.model.encode_first_stage(inpainted_image).mean  
             encoded_z_0 = self.model.encode_first_stage(inpainted_image)
             encoded_z_0 = self.model.get_first_stage_encoding(encoded_z_0)
-            inpaint_error = torch.linalg.norm(encoded_z_0 - pred_z_0)
+            inpaint_error = torch.linalg.norm(encoded_z_0 - pred_z_0_opt)
             
             error = inpaint_error * gamma + meas_error * omega
             gradients = torch.autograd.grad(error, inputs=z_t)[0]
@@ -399,7 +390,7 @@ class DDIMSampler(object):
         
         
         #########################################
-        else:
+        else:   # not working!!
             print('Running other inverse')
             if unconditional_conditioning is None or unconditional_guidance_scale == 1.:
                 with torch.no_grad():

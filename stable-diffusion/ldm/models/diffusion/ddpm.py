@@ -888,7 +888,7 @@ class LatentDiffusion(DDPM):
 
         return [rescale_bbox(b) for b in bboxes]
 
-    def apply_model(self, x_noisy, t, cond, drop_rate=0.0, drop_type={'self':False, 'cross': False}, return_ids=False):
+    def apply_model(self, x_noisy, t, cond, use_pag=False, return_ids=False):
 
         if isinstance(cond, dict):
             # hybrid case, cond is exptected to be a dict
@@ -984,7 +984,7 @@ class LatentDiffusion(DDPM):
             x_recon = fold(o) / normalization
 
         else:
-            x_recon = self.model(x_noisy, t, **cond, drop_rate=drop_rate, drop_type=drop_type)
+            x_recon = self.model(x_noisy, t, **cond, use_pag=use_pag)
 
         if isinstance(x_recon, tuple) and not return_ids:
             return x_recon[0]
@@ -1399,7 +1399,7 @@ class DiffusionWrapper(pl.LightningModule):
         self.conditioning_key = conditioning_key
         assert self.conditioning_key in [None, 'concat', 'crossattn', 'hybrid', 'adm']
     
-    def forward(self, x, t, c_concat: list = None, c_crossattn: list = None, drop_rate=0.0, drop_type={'self': False, 'cross': False}):  
+    def forward(self, x, t, c_concat: list = None, c_crossattn: list = None, use_pag=False):  
             
         if self.conditioning_key is None:
             out = self.diffusion_model(x, t)
@@ -1408,7 +1408,7 @@ class DiffusionWrapper(pl.LightningModule):
             out = self.diffusion_model(xc, t)
         elif self.conditioning_key == 'crossattn':
             cc = torch.cat(c_crossattn, 1)
-            out = self.diffusion_model(x, t, context=cc, drop_rate=drop_rate, drop_type=drop_type)
+            out = self.diffusion_model(x, t, context=cc, use_pag=use_pag)
         elif self.conditioning_key == 'hybrid':
             xc = torch.cat([x] + c_concat, dim=1)
             cc = torch.cat(c_crossattn, 1)

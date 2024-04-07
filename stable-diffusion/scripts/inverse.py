@@ -10,7 +10,6 @@ from itertools import islice
 from einops import rearrange
 from torchvision.utils import make_grid
 import time
-from pytorch_lightning import seed_everything
 from torch import autocast
 from contextlib import contextmanager, nullcontext
 import random
@@ -18,8 +17,7 @@ from ldm.util import instantiate_from_config
 from ldm.models.diffusion.psld import DDIMSampler
 from ldm.models.diffusion.plms import PLMSSampler
 from ldm.models.diffusion.dpm_solver import DPMSolverSampler
-import datetime
-# from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionSafetyChecker
+#from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionSafetyChecker
 from transformers import AutoFeatureExtractor
 
 import pdb
@@ -28,7 +26,7 @@ import pdb
 # load safety model
 safety_model_id = "CompVis/stable-diffusion-safety-checker"
 safety_feature_extractor = AutoFeatureExtractor.from_pretrained(safety_model_id)
-# safety_checker = StableDiffusionSafetyChecker.from_pretrained(safety_model_id)
+#safety_checker = StableDiffusionSafetyChecker.from_pretrained(safety_model_id)
 
 
 
@@ -114,7 +112,7 @@ def main():
         type=str,
         nargs="?",
         help="dir to write results to",
-        default="outputs/txt2img-samples"
+        default="outputs"
     )
     parser.add_argument(
         "--skip_grid",
@@ -207,10 +205,10 @@ def main():
         help="unconditional guidance scale: eps = eps(x, empty) + scale * (eps(x, cond) - eps(x, empty))",
     )
     parser.add_argument(
-        "--adg_scale",
+        "--pag_scale",
         type=float,
         default=0.0,
-        help="attention drop guidance",
+        help="perturbed-attention guidance scale",
     )
     parser.add_argument(
         "--scale_schedule",
@@ -219,42 +217,21 @@ def main():
         help="scheduling adg scale",
     )
     parser.add_argument(
-        "--drop_rate",
-        type=float,
-        default=0.0,
-        help="attention drop rate",
-    )
-    parser.add_argument(
-        "--input_drop",
+        "--input_layer",
         type=lambda x: [int(i) for i in x.split(',')],
         default=[],
-        help="input layers to drop"
+        help="input layers to perturb"
     )
     parser.add_argument(
-        "--middle_drop",
+        "--middle_layer",
         action='store_true',
-        help="whether the middle block is dropped"
+        help="wheter to perturb middle layer"
     )
     parser.add_argument(
-        "--output_drop",
+        "--output_layer",
         type=lambda x: [int(i) for i in x.split(',')],
         default=[],
-        help="output layers to drop"
-    )
-    parser.add_argument(
-        "--save_log",
-        action='store_true',
-        help="whether to save the logs"
-    )
-    parser.add_argument(
-        "--drop_self",
-        action='store_true',
-        help="drop self attention"
-    )
-    parser.add_argument(
-        "--drop_cross",
-        action='store_true',
-        help="drop cross attention"
+        help="output layers to perturb"
     )
     parser.add_argument(
         "--from-file",
@@ -274,12 +251,6 @@ def main():
         help="path to checkpoint of model",
     )
     parser.add_argument(
-        "--seed",
-        type=int,
-        default=-1,
-        help="the seed (for reproducible sampling)",
-    )
-    parser.add_argument(
         "--precision",
         type=str,
         help="evaluate at this precision",
@@ -297,7 +268,7 @@ def main():
         "--data_path",
         type=str,
         default=None,
-        help="Sample Image path",
+        help="Image path to sample",
     )
     parser.add_argument(
         "--task_config",
@@ -344,7 +315,7 @@ def main():
     parser.add_argument(
         "--file_id",
         type=str,
-        default='00014.png',
+        default='00000.png',
         help='input image',
     )
     parser.add_argument(
@@ -360,7 +331,6 @@ def main():
     ##
 
     opt = parser.parse_args()
-    # pdb.set_trace()
 
     if opt.laion400m:
         print("Falling back to LAION 400M model...")
@@ -373,23 +343,14 @@ def main():
         opt.config = "models/ldm/ffhq256/config.yaml"
         opt.ckpt = "models/ldm/ffhq256/model.ckpt"
     ##
-    org_seed=torch.initial_seed()
     
-    if opt.seed==-1:
-        seed=seed_everything(torch.initial_seed())
-    else:
-        seed=seed_everything(opt.seed)
-
-    seed_dict={}
-    seed_dict['global_seed']=seed
     
-
-    drop_type={'self': opt.drop_self, 'cross': opt.drop_cross}
 
     config = OmegaConf.load(f"{opt.config}")
-    config['model']['params']['unet_config']['params']['input_drop']=opt.input_drop
-    config['model']['params']['unet_config']['params']['middle_drop']=opt.middle_drop
-    config['model']['params']['unet_config']['params']['output_drop']=opt.output_drop
+    config['model']['params']['unet_config']['params']['input_drop']=opt.input_layer
+    config['model']['params']['unet_config']['params']['middle_drop']=opt.middle_layer
+    config['model']['params']['unet_config']['params']['output_drop']=opt.output_layer
+
     model = load_model_from_config(config, f"{opt.ckpt}")
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     model = model.to(device)
@@ -402,10 +363,18 @@ def main():
         # pdb.set_trace()
         sampler = DDIMSampler(model)
 
-    outpath = opt.outdir
-    if ',' in outpath:
-        outpath=outpath.replace(',', '')
+    if 'box_inpainting' in opt.task_config:
+        task='bip'
+    elif 'gaussian_deblur' in opt.task_config:
+        task='gb'
+    elif 'motion_deblur' in opt.task_config:
+        task='mb'
+    elif 'super_resolution' in opt.task_config:
+        task='sr8'
+    else:
+        raise NotImplementedError('Given task config is not supported.')
 
+    outpath = os.path.join(opt.outdir,task)
     os.makedirs(outpath, exist_ok=True)
     
     print("Creating invisible watermark encoder (see https://github.com/ShieldMnt/invisible-watermark)...")
@@ -429,10 +398,8 @@ def main():
     sample_path = os.path.join(outpath, "samples")
     os.makedirs(sample_path, exist_ok=True)
     save_name = (opt.file_id).split('.')[0]
-    os.makedirs(os.path.join(outpath, 'logs'), exist_ok=True)
 
     
-
 
     base_count = len(os.listdir(sample_path))
     grid_count = len(os.listdir(outpath)) - 1
@@ -472,18 +439,12 @@ def main():
         task_config['data']['root'] = opt.data_path
     img = plt.imread(task_config['data']['root']+opt.file_id)
 
-    # img = next(iter(loader))
-
     img = img - img.min()
     img = img / img.max()
     img = torch.FloatTensor(img)
     img = torch.unsqueeze(img, dim=0).permute(0,3,1,2)
     img = img[:,:3,:,:].cuda()
 
-
-    seed_dict['operator_state']=torch.get_rng_state()
-    seed_dict['inpainting_seed']=np.random.get_state()[1][0]
-    
     # Prepare Operator and noise
     measure_config = task_config['measurement']
     operator = get_operator(device=device, **measure_config['operator'])
@@ -519,7 +480,6 @@ def main():
         mask = None
     
     
-    
     #########################################################
     def save_np_as_png(img, path):
         img = img[0].permute(1,2,0).cpu().numpy()
@@ -531,59 +491,13 @@ def main():
         img.save(path)
 
     save_yn_path=os.path.join(outpath, 'y_n')
-    if not os.path.exists(save_yn_path):
-        os.makedirs(save_yn_path)
+    os.makedirs(save_yn_path, exist_ok=True)
     save_np_as_png(y_n.clone().detach(), os.path.join(save_yn_path, f"y_n_{save_name}.png"))
     
-    def encoding_image(sample):
-        x_samples_ddim = model.decode_first_stage(sample)
-        x_samples_ddim = torch.clamp((x_samples_ddim + 1.0) / 2.0, min=0.0, max=1.0)
-        x_samples_ddim = x_samples_ddim.cpu().permute(0, 2, 3, 1).numpy()
-
-        # x_checked_image, has_nsfw_concept = check_safety(x_samples_ddim)
-        # x_checked_image_torch = torch.from_numpy(x_checked_image).permute(0, 3, 1, 2)
-        
-        x_checked_image_torch = torch.from_numpy(x_samples_ddim).permute(0, 3, 1, 2)
-
-        return x_checked_image_torch
-
-    def create_and_save_grid_image(images, save_path, grid_x):
-        grid_size=(grid_x, 1)
-        # 모든 이미지의 크기가 동일한지 확인
-        img_width, img_height = images[0].size
-
-        # 새 이미지 캔버스 생성
-        grid_img = Image.new('RGB', (img_width * grid_size[0], img_height * grid_size[1]))
-
-        # 이미지 그리드에 이미지 배치
-        for i, img in enumerate(images):
-            grid_x = i % grid_size[0] * img_width
-            grid_y = i // grid_size[0] * img_height
-            grid_img.paste(img, (grid_x, grid_y))
-
-        if os.path.exists(save_path):
-            print("Already Exist")
-        else:
-            print(f"{save_path} has been saved")
-            grid_img.save(save_path)
-
-
-    seed_dict['latent_state']=torch.get_rng_state()
     start_code = None
     if opt.fixed_code:
         start_code = torch.randn([opt.n_samples, opt.C, opt.H // opt.f, opt.W // opt.f], device=device)
-    
-    with open(os.path.join(outpath, 'logs', f"{save_name}.txt"), 'w') as file:
-        korea_offset = datetime.timedelta(hours=9) 
-        file.write('File id: '+ str(save_name)+'\n'
-                    + 'Seed: '+ str(torch.initial_seed()) + '\n'
-                    + 'Generate Time: ' + str(datetime.datetime.now()+korea_offset) + '\n'
-                    + 'Args: ' + str(opt) + '\n'
-                    + 'Seed Dict' + str(seed_dict))
         
-    os.makedirs(os.path.join(outpath, 'seeds'), exist_ok=True)
-    with open(os.path.join(outpath, 'seeds', f'{save_name}.pt'), 'wb') as seed_log:
-        torch.save(seed_dict, seed_log)
 
     precision_scope = autocast if opt.precision=="autocast" else nullcontext
     with precision_scope("cuda"):
@@ -618,17 +532,14 @@ def main():
                             prompts = list(prompts)
                         c = model.get_learned_conditioning(prompts)
                         shape = [opt.C, opt.H // opt.f, opt.W // opt.f]
-                        samples_ddim, intermediates = sampler.sample(S=opt.ddim_steps,
+                        samples_ddim, _ = sampler.sample(S=opt.ddim_steps,
                                                         conditioning=c,
                                                         batch_size=opt.n_samples,
                                                         shape=shape,
                                                         verbose=False,
                                                         unconditional_guidance_scale=opt.cfg_scale,
                                                         unconditional_conditioning=uc,
-                                                        adg_scale=opt.adg_scale,
-                                                        drop_rate=opt.drop_rate,
-                                                        drop_type=drop_type,
-                                                        scale_schedule=opt.scale_schedule,
+                                                        pag_scale=opt.pag_scale,
                                                         eta=opt.ddim_eta,
                                                         x_T=start_code,
                                                         ip_mask = mask,
@@ -641,7 +552,14 @@ def main():
                                                         noiser=noiser)
                         
 
-                    x_checked_image_torch=encoding_image(samples_ddim)
+                    x_samples_ddim = model.decode_first_stage(samples_ddim)
+                    x_samples_ddim = torch.clamp((x_samples_ddim + 1.0) / 2.0, min=0.0, max=1.0)
+                    x_samples_ddim = x_samples_ddim.cpu().permute(0, 2, 3, 1).numpy()
+
+                    # x_checked_image, has_nsfw_concept = check_safety(x_samples_ddim)
+                    # x_checked_image_torch = torch.from_numpy(x_checked_image).permute(0, 3, 1, 2)
+                    
+                    x_checked_image_torch = torch.from_numpy(x_samples_ddim).permute(0, 3, 1, 2)
                     
                     if not opt.skip_save:
                         for x_sample in x_checked_image_torch:
@@ -659,77 +577,6 @@ def main():
                                 img = Image.fromarray(x_sample.astype(np.uint8))
                                 # img = put_watermark(img, wm_encoder)
                                 img.save(os.path.join(sample_path, f"{save_name}.png"))
-                            
-                            
-
-                    if opt.save_log:
-                        x_inter_path = os.path.join(outpath, 'x_inter')
-                        pred_x0_path = os.path.join(outpath, 'pred_x0')
-                        pred_x0_perturb_path = os.path.join(outpath, 'pred_x0_perturb')
-                        pred_x0_e_diff = os.path.join(outpath, 'pred_e_diff')
-                        os.makedirs(x_inter_path, exist_ok=True)
-                        os.makedirs(pred_x0_path, exist_ok=True)
-                        os.makedirs(pred_x0_perturb_path, exist_ok=True)
-                        os.makedirs(pred_x0_e_diff, exist_ok=True)
-                        x_inter_image_torch=[encoding_image(sample) for sample in intermediates['x_inter']]
-                        img_list=[]
-                        for x_sample in x_inter_image_torch:
-                            if opt.inpainting:  # Inpainting gluing logic as in SD inpaint.py
-                                inpainted = mask*image+(1-mask)*x_sample.cpu().numpy()
-                                inpainted = inpainted.transpose(0,2,3,1)[0]*255
-                                img= Image.fromarray(inpainted.astype(np.uint8))
-                                img_list.append(img)
-                            else:
-                                x_sample = 255. * rearrange(x_sample.cpu().numpy(), 'c h w -> h w c')
-                                img = Image.fromarray(x_sample.astype(np.uint8))
-                                # img = put_watermark(img, wm_encoder)
-                                img_list.append(img)
-                        create_and_save_grid_image(img_list, os.path.join(x_inter_path, f"{save_name}.png"), len(img_list))
-
-                        x0_predicted_image_torch=[encoding_image(sample) for sample in intermediates['pred_x0_cond']]
-                        img_list=[]
-                        for x_sample in x0_predicted_image_torch:
-                            if opt.inpainting:  # Inpainting gluing logic as in SD inpaint.py
-                                inpainted = mask*image+(1-mask)*x_sample.cpu().numpy()
-                                inpainted = inpainted.transpose(0,2,3,1)[0]*255
-                                img= Image.fromarray(inpainted.astype(np.uint8))
-                                img_list.append(img)
-                            else:
-                                x_sample = 255. * rearrange(x_sample.cpu().numpy(), 'c h w -> h w c')
-                                img = Image.fromarray(x_sample.astype(np.uint8))
-                                # img = put_watermark(img, wm_encoder)
-                                img_list.append(img)
-                        create_and_save_grid_image(img_list, os.path.join(pred_x0_path, f"{save_name}.png"), len(img_list))
-
-                        x0_perturbed_image_torch=[encoding_image(sample) for sample in intermediates['pred_x0_perturb']]
-                        img_list=[]
-                        for x_sample in x0_perturbed_image_torch:
-                            if opt.inpainting:  # Inpainting gluing logic as in SD inpaint.py
-                                inpainted = mask*image+(1-mask)*x_sample.cpu().numpy()
-                                inpainted = inpainted.transpose(0,2,3,1)[0]*255
-                                img= Image.fromarray(inpainted.astype(np.uint8))
-                                img_list.append(img)
-                            else:
-                                x_sample = 255. * rearrange(x_sample.cpu().numpy(), 'c h w -> h w c')
-                                img = Image.fromarray(x_sample.astype(np.uint8))
-                                # img = put_watermark(img, wm_encoder)
-                                img_list.append(img)
-                        create_and_save_grid_image(img_list, os.path.join(pred_x0_perturb_path, f"{save_name}.png"), len(img_list))
-                        
-                        x0_e_diff_image_torch=[encoding_image(sample) for sample in intermediates['pred_x0_e_diff']]
-                        img_list=[]
-                        for x_sample in x0_e_diff_image_torch:
-                            if opt.inpainting:  # Inpainting gluing logic as in SD inpaint.py
-                                inpainted = mask*image+(1-mask)*x_sample.cpu().numpy()
-                                inpainted = inpainted.transpose(0,2,3,1)[0]*255
-                                img= Image.fromarray(inpainted.astype(np.uint8))
-                                img_list.append(img)
-                            else:
-                                x_sample = 255. * rearrange(x_sample.cpu().numpy(), 'c h w -> h w c')
-                                img = Image.fromarray(x_sample.astype(np.uint8))
-                                # img = put_watermark(img, wm_encoder)
-                                img_list.append(img)
-                        create_and_save_grid_image(img_list, os.path.join(pred_x0_e_diff, f"{save_name}.png"), len(img_list))
 
 
                     if not opt.skip_grid:
@@ -743,7 +590,7 @@ def main():
                                 x_sample = 255. * rearrange(x_sample.cpu().numpy(), 'c h w -> h w c')
                                 img = Image.fromarray(x_sample.astype(np.uint8))
                                 # img = put_watermark(img, wm_encoder)
-                                img.save(os.path.join(sample_path, f"{base_count:05}_low_res.png"))
+                                img.save(os.path.join(sample_path, f"{save_name}_low_res.png"))
                                 base_count += 1
 
                         

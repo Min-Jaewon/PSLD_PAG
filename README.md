@@ -1,29 +1,24 @@
 ## Environment Setting
 ```sh install_env.sh``` : If it doesn't work, install envrionments manually in the file
 
-## FFHQ 256x256 1k validation set
-Link : <https://www.kaggle.com/datasets/denislukovnikov/ffhq256-images-only>
+## Download Pretrained Model
+Link : <https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.ckpt>
 
-```00000.png ~ 00999.png``` are used
+Download the weights from the link and place them in the ```stable-diffusion/models/ldm/stable-diffusion-v1``` named as ```model.ckpt```
 
 ## File to run
-\# indicate which number of cuda to use
-- `bash run/bip_#.sh` for random inpainting task.
-- `bash run/gb_#.sh` for Gaussian deblur task. 
-- `bash run/mb_#.sh` for motion deblur task.
-- `bash run/sr8_#.sh` for super-resolution task. 
+```task : {bip, gb, mb, sr8}```
 
-500 images per 1 gpu
+```
+- bash run/ffhq_{task}_pag.sh  # for ffhq dataset
+- bash run/imagenet_{task}_pag.sh # for imagenet dataset
+```
 
-**Each Sampling requires at least 20GB memory**
 ## Struture of result
-``````
-result/{task} # bip, gb, mb, sr8
-├── logs
-│    └─{file_id}.txt    # fundamental logs
+```
+outputs/{task} # bip, gb, mb, sr8
 ├── samples
 │    └─{file_id}.png    # sample images
-├── seeds
-│    └─{file_id}.pt     # seed information
 └── y_n
-     └─{file_id}.png    # y_n (degraded) images
+     └─y_n_{file_id}.png    # y_n (degraded) images
+```

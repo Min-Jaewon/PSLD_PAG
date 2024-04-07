@@ -77,12 +77,12 @@ class TimestepEmbedSequential(nn.Sequential, TimestepBlock):
     support it as an extra input.
     """
 
-    def forward(self, x, emb, context=None, drop_rate=0.0, drop_type={'self': False, 'cross': False}):
+    def forward(self, x, emb, context=None, use_pag=False):
         for layer in self:
             if isinstance(layer, TimestepBlock):
                 x = layer(x, emb)
             elif isinstance(layer, SpatialTransformer):
-                x = layer(x, context, drop_rate, drop_type)
+                x = layer(x, context, use_pag)
             else:
                 x = layer(x)
         return x
@@ -465,8 +465,8 @@ class UNetModel(nn.Module):
         context_dim=None,                 # custom transformer support
         n_embed=None,                     # custom support for prediction of discrete ids into codebook of first stage vq model
         legacy=True,
-        input_drop=[5,7,8],
-        middle_drop=True,
+        input_drop=[],
+        middle_drop=False,
         output_drop=[]
     ):
         super().__init__()
@@ -711,7 +711,7 @@ class UNetModel(nn.Module):
         self.middle_block.apply(convert_module_to_f32)
         self.output_blocks.apply(convert_module_to_f32)
 
-    def forward(self, x, timesteps=None, context=None, drop_rate=0.0, drop_type={'self': False, 'cross': False}, y=None,**kwargs):
+    def forward(self, x, timesteps=None, context=None, use_pag=False, y=None,**kwargs):
         """
         Apply the model to an input batch.
         :param x: an [N x C x ...] Tensor of inputs.
@@ -734,22 +734,22 @@ class UNetModel(nn.Module):
         h = x.type(self.dtype)
         for num_layer, module in enumerate(self.input_blocks):
             if num_layer in self.input_drop:
-                h = module(h, emb, context, drop_rate, drop_type)
+                h = module(h, emb, context, use_pag)
             else:
-                h = module(h, emb, context, 0.0)
+                h = module(h, emb, context, use_pag=False)
             hs.append(h)
 
         if self.middle_drop:
-            h = self.middle_block(h, emb, context, drop_rate, drop_type)
+            h = self.middle_block(h, emb, context, use_pag)
         else:
-            h = self.middle_block(h, emb, context, 0.0)
+            h = self.middle_block(h, emb, context, use_pag=False)
             
         for num_layer, module in enumerate(self.output_blocks):
             h = th.cat([h, hs.pop()], dim=1)
             if num_layer in self.output_drop:
-                h = module(h, emb, context, drop_rate, drop_type)
+                h = module(h, emb, context, use_pag)
             else:
-                h = module(h, emb, context, 0.0)
+                h = module(h, emb, context, use_pag=False)
 
         h = h.type(x.dtype)
         
