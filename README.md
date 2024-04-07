@@ -17,6 +17,7 @@ Download the weights from the link and place them in the ```stable-diffusion/mod
 ```task : {bip, gb, mb, sr8}```
 
 ```
+cd stable-diffusion
 - bash run/ffhq_{task}_pag.sh  # for ffhq dataset
 - bash run/imagenet_{task}_pag.sh # for imagenet dataset
 ```
